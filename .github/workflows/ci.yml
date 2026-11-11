@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The action runs on whatever Node the runner image ships, which changes without
+        # warning, so the floor and the current release are both checked rather than one
+        # pinned version.
+        node: ['20', '22', '24']
+    name: test (node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No install step: there are no dependencies and no lockfile (ADR-0006).
+      - run: node --test test/*.test.js
+
+  example-grid-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      # docs/example-grid-map.svg is what the README shows, and it is a build product of the
+      # converter and the renderer over a committed fixture: real Vitest output from vueuse,
+      # with its checkout moved to a runner path. Rendering is deterministic, so a rendered copy
+      # that differs from the committed one means the picture in the README is stale.
+      - name: Re-render the example grid map
+        # GITHUB_* variables can't be set through `env:`, so the workspace is set on the command.
+        run: |
+          GITHUB_WORKSPACE=/home/runner/work/vueuse/vueuse \
+            node src/convert-summary.js test/fixtures/coverage-summary.json "$RUNNER_TEMP/example-breakdown.txt"
+          PACKAGE_DEPTH=1 node src/render-gridmap.js "$RUNNER_TEMP/example-breakdown.txt" "$RUNNER_TEMP/example-grid-map.svg"
+
+      - name: Check the committed copy is current
+        run: |
+          if ! diff -u docs/example-grid-map.svg "$RUNNER_TEMP/example-grid-map.svg"; then
+            echo "::error file=docs/example-grid-map.svg::The example grid map is stale. Regenerate it with the commands in the step above, writing to docs/example-grid-map.svg."
+            exit 1
+          fi
